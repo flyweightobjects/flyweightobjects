@@ -1,0 +1,583 @@
+﻿##|TYPE Template
+##|UNIQUEID 5cb9d026-0005-4b3a-b889-6edd14952dd0
+##|TITLE FlyweightObjects.NET
+##|NAMESPACE FlyweightObjects.NET
+##|SOURCE_TYPE Source
+##|OUTPUT_LANGUAGE C#
+##|GUI_ENGINE Microsoft Script
+##|GUI_LANGUAGE VBScript
+##|GUI_BEGIN
+Dim cmbDatabases
+Dim lstTables
+
+Sub setup()
+
+	If Not input.Contains("lstTables") Or Not input.Contains("txtPath") Then
+
+		ui.Title = "C# Schema Objects"
+		ui.Width  = 575
+		ui.Height = 630
+
+		' Grab default output path
+		Dim sOutputPath
+		sOutputPath = ""
+		If input.Contains("defaultOutputPath") Then 
+			sOutputPath = input.Item("defaultOutputPath")
+		End If
+
+		ui.AddLabel "lblPath", "Output file path: ",  "Select the output path."
+		ui.AddTextBox "txtPath", sOutputPath, "Select the Output Path."
+		ui.AddFilePicker "btnPath", "Select Path", "Select the Output Path.", "txtPath", true
+
+		ui.AddLabel "lblNamespace", "C# Namespace: ",  "Provide your objects namespace."
+		ui.AddTextBox "txtNamespace", "FlyweightObjects", "Provide your objects namespace."
+		
+		ui.AddCheckBox "chkAbstract", "Mark All Classes Abstract", False, "Mark all classes abstract."
+		ui.AddCheckBox "chkPrependUnderscoreInFileName", "Prepend Underscore in File Name", False, "Prepend Underscore in File Name."
+		ui.AddCheckBox "chkUseNullableValueTypes", "Use Nullable Value Types", True, "Use Nullable Value Types."
+		ui.AddCheckBox "chkUsePascalCase", "Convert to Pascal Case", False, "Pascal Case All Objects and Properties."
+		ui.AddCheckBox "chkINotifyPropertyChanging", "Implement INotifyPropertyChanging", True, "Implement INotifyPropertyChanging."
+		ui.AddCheckBox "chkINotifyPropertyChanged", "Implement INotifyPropertyChanged", True, "Implement INotifyPropertyChanged."
+				
+		' List Databases in a ComboBox
+		ui.AddLabel "lblDatabases", "Select a database:", "Select a database in the dropdown below."
+		Set cmbDatabases = ui.AddComboBox("cmbDatabase", "Select a database.")
+
+		' List Tables in a listbox
+		ui.AddLabel "lblTables", "Select tables:", "Select tables from the listbox below."
+		Set lstTables = ui.AddListBox ("lstTables", "Select tables:")
+		'lstTables.IsMultiSelect = false
+		lstTables.Height = 120
+
+		ui.AddLabel "lblLanguage", "Select a language:", "Select a Language for Column Mappings."
+		Set cmbLanguages = ui.AddComboBox("cmbLanguages", "Select a Language.")
+		cmbLanguages.Item("C#")              = "C#"
+		cmbLanguages.Item("C# System Types") = "C# System Types"
+		cmbLanguages.SelectedValue = "C#"
+
+		' Attach the onchange event to the cmbDatabases control.
+		setupDatabaseDropdown cmbDatabases
+		cmbDatabases.AttachEvent "onchange", "cmbDatabases_onchange"
+		
+		ui.ShowGUI = true
+	Else 
+		ui.ShowGUI = false
+	End if
+
+End Sub
+
+Sub setupDatabaseDropdown(cmbDatabases)
+	cmbDatabases.BindData MyMeta.Databases
+
+	If Not MyMeta.DefaultDatabase Is Nothing Then
+		cmbDatabases.SelectedValue = MyMeta.DefaultDatabase.Name
+		bindTables cmbDatabases.SelectedValue
+	End If
+End Sub
+
+Sub bindTables(sDatabase)
+	Set db = MyMeta.Databases(sDatabase)
+	lstTables.BindData(db.Tables)
+End Sub
+
+' Event Handler
+Sub cmbDatabases_onchange(control)
+	Set cmbDatabases = ui.item("cmbDatabase")
+	bindTables cmbDatabases.SelectedText
+End Sub
+##|GUI_END
+##|BODY_MODE Markup
+##|BODY_ENGINE Microsoft Script
+##|BODY_LANGUAGE VBScript
+##|BODY_TAG_START <%
+##|BODY_TAG_END %>
+##|BODY_BEGIN
+<%
+Dim name
+Dim pname
+Dim objTable
+Dim objColumn
+Dim tableNames
+Dim databaseName
+Dim database
+Dim namespace
+Dim blnAbstract
+Dim blnAllowNullableTypes
+Dim blnUsePascalCase
+Dim blnIQueryResult
+Dim blnINotifyPropertyChanging
+Dim blnINotifyPropertyChanged
+
+' get form level data
+namespace = input.Item("txtNamespace")
+blnAbstract = input.Item("chkAbstract")
+blnAllowNullableTypes = input.Item("chkUseNullableValueTypes")
+blnUsePascalCase = input.Item("chkUsePascalCase")
+blnINotifyPropertyChanging = input.Item("chkINotifyPropertyChanging")
+blnINotifyPropertyChanged = input.Item("chkINotifyPropertyChanged")
+
+' set the Language for our column data types
+MyMeta.Language = input.Item("cmbLanguages")
+MyMeta.DbTarget  = "SqlClient"
+
+' grab the choices the user made in our UI Script (see Interface Code tab)
+Set tableNames = input.Item("lstTables")
+
+databaseName  = input.Item("cmbDatabase")
+Set database = MyMeta.Databases(databaseName)
+
+' loop through the tables
+'on error resume next 
+'STOP 
+For intCount = 0 To tableNames.Count - 1
+	Set objTable = database.Tables(tablenames.item(intCount))
+%>using System;
+using System.Data;
+using System.ComponentModel;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.Linq.Expressions;
+using FlyweightObjects;
+
+namespace <%= TrimSpaces(namespace) %>
+{
+	[Serializable]
+	[EditorBrowsable(EditorBrowsableState.Always)]<% output.Write(vbCrLf & vbTab & GetDataTableAttribute(objTable)) %>
+	public partial <%= GetClassModifiers() %> <%= GetClassName(objTable) %><%= GetInterfaces() %>
+	{
+		PropertyStorage Storage = new PropertyStorage(typeof(<%= GetClassName(objTable) %>));
+
+        PropertyStorage IFlyweight.Storage
+        {
+            get { return this.Storage; }
+            set { this.Storage = value; }
+        } 
+		<%For Each objForeignKey in objTable.ForeignKeys 
+		If objForeignKey.ForeignTable.Name <> objTable.Name And TableInSelection(objForeignKey.ForeignTable.Name) And IsSingularRelationship(objForeignKey) Then %>
+		[DataRelation(AllowPreload=true)]
+		public <%= FormatName(objForeignKey.ForeignTable.Name) %> <%= GetObjectMemberName(objForeignKey) %>
+		{
+			get { return this.Storage.GetDataRelation<%= "<" & FormatName(objForeignKey.ForeignTable.Name) & ">(Properties.Name(p => " & GetObjectMemberName(objForeignKey)%>)).GetProperty(<%= GetObjectContainerGetPropertyString(objForeignKey) %>).ToSingle(); }
+			set { this.Storage.GetDataRelation<%= "<" & FormatName(objForeignKey.ForeignTable.Name) & ">(Properties.NameOfOf(p => " & GetObjectMemberName(objForeignKey)%>)).SetProperty(value); }
+		} 
+		<% ElseIf objForeignKey.ForeignTable.Name <> objTable.Name And TableInSelection(objForeignKey.ForeignTable.Name) And Not IsSingularRelationship(objForeignKey) Then %>
+		[DataRelation(AllowPreload=true)]
+		public FlyweightSet<%= "<" & FormatName(objForeignKey.ForeignTable.Name) & ">" %> <%= GetObjectMemberName(objForeignKey) %>
+		{
+			get { return this.Storage.GetDataRelation<%= "<" & FormatName(objForeignKey.ForeignTable.Name) & ">(Properties.NameOf(p => " & GetObjectMemberName(objForeignKey)%>)).GetProperty(<%= GetObjectContainerGetPropertyString(objForeignKey) %>).ToFlyweightSet(); }
+			set { this.Storage.GetDataRelation<%= "<" & FormatName(objForeignKey.ForeignTable.Name) & ">(Properties.NameOf(p => " & GetObjectMemberName(objForeignKey)%>)).SetProperty(value); }
+		}
+		<%	End If
+		Next 
+		For Each objColumn in objTable.Columns%>
+		<%= GetDataColumnAttribute(objColumn) %>
+		public virtual <%= GetLanguageType(objColumn) %> <%= GetPropertyName(objColumn) %>
+		{
+			get { return this.Storage.GetProperty<%= "<" & GetLanguageType(objColumn) & ">" %>(Properties.NameOf(p => <%=GetPropertyName(objColumn)%>)); }
+			set 
+			{ 
+				<% If blnINotifyPropertyChanging Then output.write("SendPropertyChanging(" & GetSendPropertyChangedExpression(objColumn) & ");") End If %>
+				this.Storage.SetProperty<%= "<" & GetLanguageType(objColumn) & ">" %>(Properties.NameOf(p => <%=GetPropertyName(objColumn)%>), value);
+				<% If blnINotifyPropertyChanged Then output.write("SendPropertyChanged(" & GetSendPropertyChangedExpression(objColumn) & ");") End If %>
+			}
+		}
+		<%Next%>
+		#region IRedundancyCheck Members
+
+        [PropertyStorage]
+        public string Checksum
+        {
+            get { return this.Storage.GetProperty<string>(Properties.NameOf(p => Checksum)); }
+            set { this.Storage.SetProperty<string>(Properties.NameOf(p => Checksum), value); }
+        }
+
+        #endregion
+		
+		#region IPropertyChangedTrackable Members
+
+        [PropertyStorage]
+        public HashSet<string> ChangedProperties
+        {
+            get { return this.Storage.GetProperty<HashSet<string>>(Properties.NameOf(p => ChangedProperties)); }
+        }
+
+        #endregion
+		<% If blnINotifyPropertyChanging Then %>
+		#region INotifyPropertyChanging Members
+		
+		[field:NonSerialized]
+		public event PropertyChangingEventHandler PropertyChanging;
+        protected void SendPropertyChanging(string propertyName)
+        {
+            if (string.IsNullOrEmpty(this.Checksum))
+			{
+				this.Checksum = new ChecksumBuilder().BuildChecksum(this);
+			}
+			if (this.PropertyChanging != null)
+			{
+				this.PropertyChanging(this, new PropertyChangingEventArgs(propertyName));
+			}
+        }
+		
+		#endregion
+		<% End If %><% If blnINotifyPropertyChanged Then %>
+		#region INotifyPropertyChanged Members
+		
+		[field:NonSerialized]
+		public event PropertyChangedEventHandler PropertyChanged;
+        protected void SendPropertyChanged(string propertyName)
+        {
+            if (this.PropertyChanged != null)
+			{
+				this.PropertyChanged(this, new PropertyChangedEventArgs(propertyName));
+			}
+			if (this is IPropertyChangedTrackable)
+			{
+				((IPropertyChangedTrackable)this).ChangedProperties.Add(propertyName);
+			}
+		}
+		
+		#endregion <% End If %>
+						
+		public static class Properties
+		{	
+			<%=GetPropertiesNameExpression(objTable)%>
+            {
+                return PropertyOf<%= "<" & GetClassName(objTable) & ">" %>.Name<%= "<T>(property)" %>;
+            }
+			<%For Each objColumn in objTable.Columns %>
+			public static PropertyExpression<%= "<" & GetClassName(objTable) & "> " & GetPropertyName(objColumn)%> { get { return new PropertyExpression<%= "<" & GetClassName(objTable) & ">" %>(Properties.NameOf(p => <%=GetPropertyName(objColumn)%>)); } }<%Next%>
+ 		}
+	}
+}
+<% 
+	' Save the output file for this Table
+	Dim filename
+	filename = input.item("txtPath")
+
+	Dim length
+	Dim pos
+	lenth = Len(filename)
+	pos = InStrRev(filename, "\") 
+
+	If Not pos = lenth Then
+		filename = filename & "\"
+	End If
+
+	filename = filename & GetCasedName(objTable.Alias)
+
+	If blnAbstract Then
+		filename = filename & "Base.cs"
+	Else
+		filename = filename & ".cs"
+	End If
+	
+
+	output.save filename, false
+	buffer = buffer & output.text
+	output.clear
+Next '  tableName
+	
+	output.write buffer
+ %>
+
+<% 
+'===========================================================================
+' These are support routines called by the above scirpt
+'===========================================================================
+Function GetDataTableAttribute(objTable)
+	Dim strVal
+	If Len(Trim(objTable.Schema)) > 0 Then
+		strVal = "[DataTable(""" & objTable.Schema & "." & objTable.Name & """, AllowSelect=true, AllowInsert=true, AllowUpdate=true, AllowDelete=true, AllowTruncate=true, EnableCaching=false, CacheTimeout=0)]"
+	Else
+		strVal = "[DataTable(""" & objTable.Name & """, AllowSelect=true, AllowInsert=true, AllowUpdate=true, AllowDelete=true, AllowTruncate=true, EnableCaching=false, CacheTimeout=0)]"
+	End If
+	GetDataTableAttribute = strVal
+End Function
+
+Function GetDataColumnAttribute(objColumn)
+	Dim strValue
+	strValue = "[DataColumn(""" & objColumn.Name & """, ColumnType=" & GetColumnType(objColumn) & ", AllowDBNull=" & LCase(objColumn.IsNullable)
+	If objColumn.IsInPrimaryKey Then
+		strValue = strValue & ", Identifier=true"
+	End If
+	If objColumn.IsAutoKey Then
+		strValue = strValue & ", AutoIncrement=true" 
+	End If
+	If objColumn.IsComputed Then
+		strValue = strValue & ", Computed=true"
+	End If
+	strvalue = strValue & ")]"
+	GetDataColumnAttribute = strValue
+End Function
+
+Function GetClassModifiers
+	Dim strValue
+	If blnAbstract Then 
+		strValue = "abstract class"
+	Else
+		strValue = "class"
+	End If
+	GetClassModifiers = strValue
+End Function
+
+Function GetClassName(objTable)
+	Dim strName
+	strName = GetCasedName(objTable.Name)
+	If blnAbstract Then
+		strName = strName & "Base"
+	End If
+	GetClassName = strName
+End Function
+
+Function GetInterfaces()
+	Dim strValue
+	strValue = " : IFlyweight, IRedundancyCheck, IPropertyChangedTrackable"
+	If blnINotifyPropertyChanging Then
+		strValue = strValue & ", INotifyPropertyChanging"
+	End If
+	If blnINotifyPropertyChanged Then
+		strValue = strValue & ", INotifyPropertyChanged"
+	End If
+	GetInterfaces = strValue
+End Function
+
+Function FormatName(strName)
+	FormatName = TrimSpaces(GetCasedName(strName))
+End Function
+
+Function GetSendPropertyChangedExpression(objColumn)
+	Dim strValue
+	strValue = "Properties.NameOf(p => " & GetPropertyName(objColumn) & ")"
+	GetSendPropertyChangedExpression = strValue
+End Function
+
+Function GetPropertyName(objColumn)
+	GetPropertyName = GetCasedName(objColumn.Alias)
+End Function
+
+Function GetColumnType(objColumn)
+	Dim strVal
+	strVal = Cstr(objColumn.DbTargetType)
+	If strVal = "Unknown" Or strVal = "DbType.String" Then
+		strVal = "DbType.AnsiString"
+	End If
+	GetColumnType = strVal
+End Function
+
+Function TrimSpaces(str)
+	Dim tname
+	Dim name
+	Dim char
+	Dim l
+	name = ""
+	tname = str
+	l = Len(tname)
+	For j = 1 To l
+		char = Mid(tname, j, 1)
+		If Not char = " " Then
+			name = name & char
+		End If
+	Next
+	TrimSpaces = name
+End Function
+
+Function GetCasedName(strValue)
+	Dim temp
+	Dim retVal
+	Dim i
+	retval = strValue
+	If blnUsePascalCase Then
+		retVal = ""
+		temp = split(strValue, "_")
+		For i = 0 To UBound(temp)
+			retVal = retVal & FormatTableName(temp(i))
+		Next
+	End If
+	GetCasedName = retVal
+End Function
+
+Function FormatTableName(strTableName)
+	Dim name
+	name = TrimSpaces(strTableName)
+	FormatTableName = UCase(Left(name, 1)) & LCase(Right(name, Len(name) -1))
+End Function
+
+Function GetPrivateMemberName(strValue)
+	strValue = FormatName(strValue)	
+	GetPrivateMemberName = "_" & LCase(Left(strValue,  1)) & Mid(strValue, 2)
+End Function
+
+Function GetPrivateMemberListName(strValue)
+	Dim retVal
+	retVal = GetPluralName(GetPrivateMemberName(strValue))
+	GetPrivateMemberListName = retVal
+End Function
+
+Function GetPluralName(strName)
+	Dim retVal
+	retVal = strName
+	If UCase(Right(retVal, 1)) = "Y" Then
+		retVal = Left(retVal, Len(retVal) -1) & "ies"
+	ElseIf UCase(Right(retVal, 1)) <> "S" Then
+		retVal = retVal & "s"
+	ElseIf UCase(Right(retVal, 2)) = "SS" Then
+		retVal = retVal & "es"
+	End If
+	GetPluralName = retVal
+End Function
+
+Function GetObjectMemberName(objForeignKey)
+	Dim retVal
+	retVal = TrimSpaces(GetCasedName(objForeignKey.ForeignTable))
+	If Not IsSingularRelationship(objForeignKey) Then
+		retVal = GetPluralName(retVal)
+	End If
+	GetObjectMemberName = retVal
+End Function
+
+Function GetPrivateFieldName(strValue)
+	Dim retVal
+	Dim strTemp
+	strTemp  = GetCasedName(strValue)
+	retVal = LCase(Mid(strTemp, 1, 1)) & Mid(strTemp, 2)
+	GetPrivateFieldName = "_" & retVal
+End Function
+
+Function GetSerializableType(strLanguageType)
+	Dim retVal
+	Select Case strLanguageType
+		Case "Guid":
+			retVal = "string"
+		Case Else
+			retVal = strLanguageType
+	End Select
+	GetSerializableType = retVal
+End Function
+
+Function GetDotNetDefaultValue(strLanguageType)
+    Dim retVal
+    Select Case strLanguageType
+        Case "long": 
+			retVal = "0"
+        Case "object": 
+			retVal = "null"
+        Case "bool": 
+			retVal = "false"
+		Case "boolean": 
+			retVal = "false"
+        Case "string": 
+			retVal = "null"
+        Case "DateTime":
+			retVal = "DateTime.Now"
+		Case "dateTime":
+			retVal = "DateTime.Now"
+        Case "decimal": 
+			retVal = "0m"
+        Case "double": 
+			retVal = "0d"
+        Case "byte[]": 
+			retVal = "null"
+        Case "int": 
+			retVal = "0"
+        Case "float": 
+			retVal = "0f"
+        Case "short": 
+			retVal = "0"
+        Case "Guid": 
+			retVal = "Guid.Empty"
+		Case Else
+			retVal = "default(" & strLanguageType & ")"
+    End Select
+    GetDotNetDefaultValue = retVal
+End Function
+
+Function IsSingularRelationship(objForeignKey) 
+	Dim retVal
+	retVal = True
+	For Each objColumn in objForeignKey.ForeignTable.PrimaryKeys
+		If Not ColumnExistsInKeyCollection(objColumn.Name, objTable.PrimaryKeys) Then
+			retVal = False
+			Exit For
+		End If
+	Next
+	IsSingularRelationship = retVal
+End Function
+
+Function ColumnExistsInKeyCollection(strColumnName, objKeys)
+	Dim retVal
+	retVal = False
+	
+	For Each objKeyColumn In objKeys
+		If objKeyColumn.Name = strColumnName Then
+			retVal = True
+			Exit For
+		End If
+	Next
+	ColumnExistsInKeyCollection = retVal
+End Function
+
+Function GetLanguageType(objcolumn)
+	Dim strReturn
+	strReturn = objColumn.LanguageType
+	If blnAllowNullableTypes And objColumn.IsNullable And objColumn.LanguageType <> "string" And objColumn.LanguageType <> "object" And objColumn.LanguageType <> "byte[]" Then
+		strReturn = "Nullable<" & objColumn.LanguageType & ">"
+	End If
+	GetLanguageType = strReturn
+End Function
+
+Function GetDataRelationOutputString(objForeignKey)
+	Dim retVal
+	Dim objPrimaryColumn
+	Dim objForeignColumn
+	Dim i
+	retVal = ""
+	For i = 0 To objForeignKey.ForeignColumns.Count -1
+		Set objPrimaryColumn = objForeignKey.PrimaryColumns.Item(i)
+		Set objForeignColumn = objForeignKey.ForeignColumns.Item(i)
+		retVal = retVal & "[DataRelation(""" & GetCasedName(objPrimaryColumn.Name) & """" & ", " & """" & GetCasedName(objForeignColumn.Name) & """" & ")]"
+		If i < objForeignKey.PrimaryColumns.Count - 1 Then
+			retVal = retVal & vbCrLf & vbTab & vbTab
+		End If
+	Next
+	GetDataRelationOutputString = retVal
+End Function
+
+Function GetObjectContainerGetPropertyString(objForeignKey)
+Dim retVal
+	Dim objPrimaryColumn
+	Dim objForeignColumn
+	Dim i
+	retVal = ""
+	For i = 0 To objForeignKey.ForeignColumns.Count -1
+		Set objPrimaryColumn = objForeignKey.PrimaryColumns.Item(i)
+		Set objForeignColumn = objForeignKey.ForeignColumns.Item(i)
+		retVal = retVal & GetCasedName(objForeignColumn.Table.Name) & ".Properties." & GetCasedName(objForeignColumn.Name) & " == this." & GetCasedName(objPrimaryColumn.Name)
+		If i < objForeignKey.PrimaryColumns.Count - 1 Then
+			retVal = retVal & " && "
+		End If
+	Next
+	GetObjectContainerGetPropertyString = retVal
+End Function
+
+Function TableInSelection(strTableName)
+	Dim retVal
+	Dim j
+	retVal = False
+	For j = 0 To tableNames.Count - 1
+		If tableNames.Item(j) = strTableName Then
+			retVal = True
+			Exit For
+		End If
+	Next
+	TableInSelection = retVal
+End Function
+
+Function GetPropertiesNameExpression(objTable)
+	Dim retVal
+	retVal = "public static string NameOf<T>(Expression<Func<" & GetClassName(objTable) & ", T>> property)"
+	GetPropertiesNameExpression = retVal
+End Function
+
+%>
+##|BODY_END
